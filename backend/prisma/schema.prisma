@@ -1,0 +1,446 @@
+// Prisma Schema for LUMI AI Labs Backend
+// Models and relations as per requirements
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+// Enums
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  DEVELOPER
+  CLIENT
+}
+
+enum ProjectStatus {
+  NEW
+  PRD_REVIEW
+  APPROVED
+  DEVELOPMENT
+  CLIENT_REVIEW
+  COMPLETED
+  ARCHIVED
+}
+
+enum MilestoneStatus {
+  DRAFT
+  IN_PROGRESS
+  SUBMITTED_BY_DEVELOPER
+  UNDER_ADMIN_REVIEW
+  SENT_TO_CLIENT
+  CLIENT_APPROVED
+  CLOSED
+  CLIENT_REQUESTED_CHANGES
+  BACK_TO_DEVELOPER
+}
+
+enum MilestoneSubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  // For revision cycles
+}
+
+enum DocumentType {
+  PRD
+  SOW
+  CONTRACT
+  INVOICE
+  DELIVERABLE
+  OTHER
+}
+
+enum NotificationType {
+  NEW_PROJECT
+  NEW_PRD
+  DEVELOPER_ASSIGNED
+  MILESTONE_SUBMITTED
+  MILESTONE_APPROVED
+  PAYMENT_RECEIVED
+  // Add more as needed
+}
+
+// Models
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password      String
+  firstName     String
+  lastName      String
+  role          Role
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  // Relations
+  refreshTokens RefreshToken[] @relation("RefreshToken")
+  // Projects where user is admin
+  projectsAsAdmin Project[] @relation("ProjectAdmin")
+  // Projects where user is client
+  projectsAsClient  Project[] @relation("ProjectClient")
+  // Client profile (if user is a client)
+  client            Client?   @relation("UserClient")
+  // Developer profile (if user is a developer)
+  developer         Developer?  @relation("UserDeveloper")
+  // Milestones submitted by this user (as developer)
+  submittedMilestones Milestone[] @relation("SubmittedBy")
+  // Milestones approved by this user (as admin)
+  approvedMilestones  Milestone[] @relation("ApprovedBy")
+  // Milestones where user is reviewer
+  reviewedMilestones  Milestone[] @relation("ReviewedBy")
+  // Submissions reviewed by user
+  reviewedSubmissions MilestoneSubmission[] @relation("SubmissionReviewer")
+  // Submissions where user requested changes
+  requestedSubmissions  MilestoneSubmission[] @relation("RequestRequestedBy")
+  // Milestone submissions by this user
+  submissions         MilestoneSubmission[] @relation("SubmittedByDeveloper")
+  // Invoices created by this user (admin)
+  invoices            Invoice[] @relation("InvoiceCreator")
+  // Payments recorded by this user (admin)
+  payments            Payment[] @relation("PaymentRecorder")
+  // Documents uploaded by this user
+  documents           Document[] @relation("DocumentUploader")
+  // Notifications for this user
+  notifications       Notification[] @relation("NotificationForUser")
+  // Messages sent by this user
+  messagesSent        Message[] @relation("MessageSender")
+  // Messages received by this user
+  messagesReceived    Message[] @relation("MessageReceiver")
+  // Activity logs for this user (performed by this user)
+  activityLogs        ActivityLog[] @relation("ActivityLogForUser")
+  // Project developer links (join table with assignedAt)
+  projectDeveloperLinks ProjectDeveloper[] @relation("ProjectDeveloper")
+  @@index([email])
+  @@index([role])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation("RefreshToken", fields: [userId], references: [id])
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([userId])
+}
+
+model Project {
+  id            String   @id @default(uuid())
+  name          String
+  description   String?
+  status        ProjectStatus @default(NEW)
+  prdId         String?      @unique
+  sowId         String?      @unique
+  clientId      String
+  adminId       String   // The admin who manages this project
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  // Relations
+  prd           PRD?         @relation("ProjectPRD", fields: [prdId], references: [id])
+  sow           SOW?         @relation("ProjectSOW", fields: [sowId], references: [id])
+  client        User         @relation("ProjectClient", fields: [clientId], references: [id])
+  admin         User         @relation("ProjectAdmin", fields: [adminId], references: [id])
+  // Project developer links (join table)
+  projectDeveloperLinks ProjectDeveloper[] @relation("ProjectDeveloper")
+  milestones    Milestone[]
+  invoices      Invoice[]
+  documents     Document[] @relation("ProjectDocument")
+  notifications Notification[] @relation("NotificationProject")
+  messages      Message[] @relation("MessageProject")
+  // Note: ActivityLog is handled via polymorphic entityId/entityType, not direct relation
+  @@index([status])
+  @@index([clientId])
+  @@index([adminId])
+}
+
+// ProjectDeveloper for many-to-many relationship between Project and Developer (User) with assignedAt
+model ProjectDeveloper {
+  projectId   String
+  developerId String
+  project     Project @relation("ProjectDeveloper", fields: [projectId], references: [id])
+  developer   User    @relation("ProjectDeveloper", fields: [developerId], references: [id])
+  assignedAt  DateTime @default(now())
+  @@id([projectId, developerId])
+  @@index([projectId])
+  @@index([developerId])
+}
+
+model PRD {
+  id            String   @id @default(uuid())
+  title         String
+  description   String?
+  version       Int      @default(1)
+  status        String?  // e.g., DRAFT, SUBMITTED, APPROVED, ARCHIVED
+  projectId     String?  @unique
+  project       Project? @relation("ProjectPRD")
+  documents     Document[] @relation("DocumentPRD")
+  createdBy     String   // User ID of the creator (from Studio)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  @@index([projectId])
+  @@index([status])
+}
+
+model SOW {
+  id            String   @id @default(uuid())
+  title         String
+  timeline      Json     // { startDate, endDate, duration }
+  deliverables  Json     // Array of { description, dueDate }
+  milestones    Json     // Array of milestone objects (we have separate Milestone model, but we can also embed or reference)
+  scope         String
+  pricing       Float?   // Admin only
+  paymentTerms  String?  // Admin only
+  projectId     String?  @unique
+  project       Project? @relation("ProjectSOW")
+  documents     Document[] @relation("DocumentSOW")
+  createdBy     String   // User ID (Admin or from Studio?)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  @@index([projectId])
+}
+
+model Milestone {
+  id            String   @id @default(uuid())
+  title         String
+  description   String?
+  status        MilestoneStatus @default(DRAFT)
+  projectId     String
+  project       Project @relation(fields: [projectId], references: [id])
+  assignedTo    String? // Developer user ID
+  dueDate       DateTime?
+  // Approval fields
+  approverId    String? // Admin user ID
+  approver      User?   @relation("ApprovedBy", fields: [approverId], references: [id])
+  // For tracking approval process
+  submittedAt   DateTime?
+  submitterId   String? // Developer user ID
+  submitter     User?   @relation("SubmittedBy", fields: [submitterId], references: [id])
+  submissionId  String?   @unique
+  reviewedBy    String? // Admin user ID
+  reviewer      User?   @relation("ReviewedBy", fields: [reviewedBy], references: [id])
+  reviewedAt    DateTime?
+  sentToClientAt DateTime?
+  clientApprovedAt DateTime?
+  clientFeedback  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  // Relations
+  submission    MilestoneSubmission? @relation("MilestoneSubmission")
+  documents     Document[] @relation("DocumentMilestone")
+  notifications Notification[] @relation("NotificationMilestone")
+  @@index([status])
+  @@index([projectId])
+  @@index([assignedTo])
+}
+
+model MilestoneSubmission {
+  id            String   @id @default(uuid())
+  milestoneId   String   @unique
+  milestone     Milestone @relation("MilestoneSubmission", fields: [milestoneId], references: [id])
+  submitterId   String   // Developer user ID
+  submitter     User     @relation("SubmittedByDeveloper", fields: [submitterId], references: [id])
+  notes         String?
+  deliverableDescription String
+  demoVideoUrl  String?
+  stagingUrl    String?
+  githubPrUrl   String?
+  screenshots   Json     // Array of URLs
+  attachments   Json     // Array of URLs
+  submittedAt   DateTime @default(now())
+  status        MilestoneSubmissionStatus @default(PENDING)
+  reviewerId    String? // Admin user ID
+  reviewer      User?   @relation("SubmissionReviewer", fields: [reviewerId], references: [id])
+  reviewedAt    DateTime?
+  feedback      String?
+  // For revision cycles
+  revisionRequestedAt DateTime?
+  requestedBy     String? // Admin user ID
+  requestedByUser   User? @relation("RequestRequestedBy", fields: [requestedBy], references: [id])
+  revisionDueDate     DateTime?
+  @@index([milestoneId])
+  @@index([submitterId])
+  @@index([reviewerId])
+  @@index([requestedBy])
+  @@index([status])
+}
+
+model Client {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation("UserClient", fields: [userId], references: [id])
+  companyName   String?
+  contactPerson String?
+  contactEmail  String?
+  contactPhone  String?
+  address       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  // Relations
+  invoices      Invoice[] @relation("InvoiceClient")
+}
+
+model Developer {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation("UserDeveloper", fields: [userId], references: [id])
+  specialization String?
+  level         String? // e.g., Junior, Mid, Senior
+  available     Boolean @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  // Relations
+  // No direct relations; access via user
+}
+
+// We'll remove the projects field from Developer to avoid confusion and potential errors.
+// Actually, let's keep it and see if it works. We'll adjust if needed.
+
+model Invoice {
+  id            String   @id @default(uuid())
+  invoiceNumber String   @unique
+  projectId     String
+  project       Project @relation(fields: [projectId], references: [id])
+  clientId      String   // Client's userId (denormalized for direct access)
+  client        Client   @relation("InvoiceClient", fields: [clientId], references: [userId])
+  amount        Float
+  status        String? // e.g., DRAFT, SENT, PAID, OVERDUE, CANCELLED
+  dueDate       DateTime?
+  issuedAt      DateTime @default(now())
+  paidAt        DateTime?
+  creatorId     String   // Admin user ID
+  creator       User     @relation("InvoiceCreator", fields: [creatorId], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  // Relations
+  payments      Payment[]
+  documents     Document[] @relation("DocumentInvoice")
+  notifications Notification[] @relation("NotificationInvoice")
+  @@index([status])
+}
+
+model Payment {
+  id            String   @id @default(uuid())
+  invoiceId     String
+  invoice       Invoice @relation(fields: [invoiceId], references: [id])
+  amount        Float
+  paymentDate   DateTime @default(now())
+  paymentMethod String? // e.g., CREDIT_CARD, BANK_TRANSFER
+  transactionId String? // External transaction ID
+  status        String? // e.g., PENDING, COMPLETED, FAILED
+  recorderId    String   // Admin user ID
+  recorder      User     @relation("PaymentRecorder", fields: [recorderId], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  @@index([invoiceId])
+  @@index([status])
+}
+
+model Document {
+  id            String   @id @default(uuid())
+  name          String
+  type          DocumentType
+  url           String   // S3 URL
+  key           String   // S3 key
+  bucket        String
+  version       Int      @default(1)
+  uploaderId    String   // User ID
+  uploader      User     @relation("DocumentUploader", fields: [uploaderId], references: [id])
+  uploadedAt    DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  // Relations
+  projectId     String?
+  project       Project? @relation("ProjectDocument", fields: [projectId], references: [id])
+  prdId         String?
+  prd           PRD?     @relation("DocumentPRD", fields: [prdId], references: [id])
+  sowId         String?
+  sow           SOW?     @relation("DocumentSOW", fields: [sowId], references: [id])
+  invoiceId     String?
+  invoice       Invoice? @relation("DocumentInvoice", fields: [invoiceId], references: [id])
+  milestoneId   String?
+  milestone     Milestone? @relation("DocumentMilestone", fields: [milestoneId], references: [id])
+  // For general documents not tied to a specific entity
+  @@index([type])
+  @@index([projectId])
+  @@index([prdId])
+  @@index([sowId])
+  @@index([invoiceId])
+  @@index([milestoneId])
+}
+
+model Notification {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation("NotificationForUser", fields: [userId], references: [id])
+  type          NotificationType
+  title         String
+  body          String
+  data          Json?    // Additional data
+  isRead        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  // Relations
+  projectId     String?
+  project       Project? @relation("NotificationProject", fields: [projectId], references: [id])
+  milestoneId   String?
+  milestone     Milestone? @relation("NotificationMilestone", fields: [milestoneId], references: [id])
+  invoiceId     String?
+  invoice       Invoice? @relation("NotificationInvoice", fields: [invoiceId], references: [id])
+  @@index([userId])
+}
+
+model Message {
+  id            String   @id @default(uuid())
+  senderId      String
+  sender        User     @relation("MessageSender", fields: [senderId], references: [id])
+  receiverId    String
+  receiver      User     @relation("MessageReceiver", fields: [receiverId], references: [id])
+  content       String
+  sentAt        DateTime @default(now())
+  readAt        DateTime?
+  // Relations
+  projectId     String?
+  project       Project? @relation("MessageProject", fields: [projectId], references: [id])
+  // We enforce that messages are only between admin and developer/client, not direct developer-client
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([projectId])
+}
+
+model ActivityLog {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation("ActivityLogForUser", fields: [userId], references: [id])
+  action        String   // e.g., LOGIN, LOGOUT, PROJECT_CREATED, PRD_APPROVED, etc.
+  entityType    String   // e.g., USER, PROJECT, PRD, MILESTONE, etc.
+  entityId      String?  // ID of the entity related to the action
+  description   String?
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+  // Make this table append-only for audit logs
+  // Note: We do not have direct relations to Project, PRD, etc. because it's polymorphic.
+  // Instead, we use entityType and entityId to reference the entity.
+  @@index([userId])
+  @@index([entityType])
+  @@index([createdAt])
+}
+
+// Soft delete: we'll use deletedAt for soft delete
+// We'll add a custom query to filter out deletedAt != null in services
+
+// Indexes for performance
+// We've added some indexes above, but we can add more as needed.

@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: lumi
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://postgres:password@postgres:5432/lumi?schema=public
+      JWT_SECRET_KEY: your-super-secret-jwt-key-change-in-production
+      JWT_REFRESH_TOKEN_SECRET_KEY: your-super-secret-refresh-token-key-change-in-production
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      - postgres
+    # Uncomment the following lines if you want to use Redis
+    # redis:
+    #   image: redis:7-alpine
+    #   ports:
+    #     - "6379:6379"
+
+volumes:
+  postgres_data:
