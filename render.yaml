@@ -1,6 +1,7 @@
 services:
   - type: web
-    name: lumi-ai-backend
+  plan: free
+  name: lumi-ai-backend
     env: python
     rootDir: backend
     buildCommand: pip install -r requirements.txt
